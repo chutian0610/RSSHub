@@ -1,14 +1,12 @@
-import { DataItem, Route } from '@/types';
-
-import cache from '@/utils/cache';
 import { load } from 'cheerio';
-import ofetch from '@/utils/ofetch';
-import { art } from '@/utils/render';
-import path from 'node:path';
+
 import { config } from '@/config';
-import { puppeteerGet } from './utils';
-import puppeteer from '@/utils/puppeteer';
 import NotFoundError from '@/errors/types/not-found';
+import { renderUserEmbed } from '@/routes/tiktok/templates/user';
+import type { DataItem, Route } from '@/types';
+import cache from '@/utils/cache';
+import ofetch from '@/utils/ofetch';
+import { getPuppeteerPage } from '@/utils/puppeteer';
 
 export const route: Route = {
     path: '/profile/:id/:type?/:functionalFlag?',
@@ -87,9 +85,18 @@ async function handler(ctx) {
             });
         } catch (error) {
             if (error.status === 403) {
-                const browser = await puppeteer();
-                response = await puppeteerGet(profileUrl, browser);
-                await browser.close();
+                const { page, destory } = await getPuppeteerPage(profileUrl, {
+                    onBeforeLoad: async (page) => {
+                        const expectResourceTypes = new Set(['document', 'script', 'xhr', 'fetch']);
+                        await page.setRequestInterception(true);
+                        page.on('request', (request) => {
+                            expectResourceTypes.has(request.resourceType()) ? request.continue() : request.abort();
+                        });
+                    },
+                });
+                await page.waitForSelector('.content');
+                response = await page.content();
+                await destory();
             } else {
                 throw new NotFoundError(error.message);
             }
@@ -150,7 +157,7 @@ async function handler(ctx) {
 
     const items: DataItem[] = data.items.map((item) => ({
         ...item,
-        description: art(path.join(__dirname, '../tiktok/templates/user.art'), {
+        description: renderUserEmbed({
             poster: item.renderData.poster,
             source: item.renderData.source,
             useIframe,
